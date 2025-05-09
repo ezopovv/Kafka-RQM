@@ -1,0 +1,76 @@
+####################################ячейка в Google Colab №1 - установка и импорт библиотек###########################################
+#установка библиотек
+!pip install kafka-python 
+
+#импорт модулей 
+import json
+import random
+import time
+from google.colab import userdata
+
+import requests
+from datetime import datetime
+
+from kafka import KafkaConsumer
+from json import loads
+
+from kafka.structs import TopicPartition
+
+####################################ячейка в Google Colab №2 - потребление из Kafka###########################################
+#объявление потребителя Kafka
+consumer = KafkaConsumer(
+  bootstrap_servers="server.any.eu-central-1.mpx.prd.cloud.redpanda.com:9092",
+  security_protocol="SASL_SSL",
+  sasl_mechanism="SCRAM-SHA-256",
+  sasl_plain_username="user",
+  sasl_plain_password="password",
+  auto_offset_reset="earliest",
+  enable_auto_commit=False,
+  consumer_timeout_ms=10000
+)
+topic='demo-topic' #название вашего топика
+
+#подписка потребителя на топик Kafka
+consumer.subscribe([topic])
+
+#Получить свой TG-токен как описано тут https://medium.com/codex/using-python-to-send-telegram-messages-in-3-simple-steps-419a8b5e5e2
+# 1.Open your telegram app and search for BotFather. (A built-in Telegram bot that helps users create custom Telegram bots)
+# 2.Type /newbot to create a new bot
+# 3.Give your bot a name & a username
+# 4.Copy your new Telegram bot’s token
+
+#задаем свой TG-токен
+TOKEN = userdata.get("TELEGRAM_BOT_TOKEN")
+
+#надо, чтобы получить chat_id, потом можно закомментить эту строку 
+#url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
+
+#задаем chat_id своего пользователя TG
+chat_id = userdata.get("TELEGRAM_CHAT_ID")
+
+for message in consumer:
+  try:
+    txt=''
+    print (message)
+    payload=message.value.decode("utf-8")
+    data=json.loads(payload)
+
+    id=data['id']
+    name=data['name']
+    subject = data['subject']
+    content = data['content']
+    now=datetime.now()
+    txt = (now.strftime("%m/%d/%Y, %H:%M:%S"), "Входящее обращение от ", data['id'], "клиент ", data['name'], "тема ", data['subject'], "содержание ", data['content'])
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={chat_id}&text={txt}"
+    print(requests.get(url).json()) # this sends the message
+  except Exception as e:
+  # запись ошибок в лог-файл на Google Диске
+    error_str = f"Error: {str(e)}, Offset: {message.offset}, Value: {message.value}\n"
+    with open("dlq.txt", "a") as f:
+        f.write(error_str)
+    print(f"Error: {str(e)}")
+
+ ####################################ячейка в Google Colab №3 - закрытие соединения###########################################
+#Закрываем соединения
+consumer.unsubscribe()
+consumer.close()
