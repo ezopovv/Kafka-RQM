@@ -1,0 +1,78 @@
+####################################ячейка в Google Colab №1 - установка и импорт библиотек##########################################
+#установка библиотек
+!pip install pika
+
+#импорт модулей 
+import pika
+import json
+import random
+
+from google.colab import auth
+auth.authenticate_user()
+
+import gspread
+from google.auth import default
+creds, _ = default()
+
+####################################ячейка в Google Colab №2 - потребление из RabbitMQ###########################################
+
+# Подключение к серверу RabbitMQ server в облачной платформе cloudamqp.com 
+connection = pika.BlockingConnection(pika.URLParameters('amqps://yewbukue:krVHVnQWyp8DrYST65nEr-rBGEETMVIw@hawk.rmq.cloudamqp.com/yewbukue'))
+channel = connection.channel()
+
+#объявление очереди RQM
+my_queue='q_A' #ваше название очереди
+consume_queue = channel.queue_declare(queue=my_queue)
+
+#Google Sheets Autentificate
+gc = gspread.authorize(creds)
+
+#Открытие заранее созданного файла Гугл-таблицы по идентификатору (взять из его URL, например, у меня это https://docs.google.com/spreadsheets/d/1BxVxI9kMHCgtRg1FLz7lsdazAjWCUbfTzSS4lApMiVY/edit)
+sh = gc.open_by_key('1gGuemiin4L2a9YZahqPc6a4Rz_FeAHnuAWtZmcoI-qo')
+wks = sh.worksheet('q_A') #название листа
+
+#счетчик строк в Гугл-таблице
+x=1
+
+#определяем функцию обратного вызова для потребления сообщений из очереди RQM
+def on_inputs_message(ch, method, properties, body):
+ global x
+ 
+ try:
+  #парсинг полезной нагрузки в JSON-формате
+  dictData = json.loads(body)
+  print("Входящее обращение от ", dictData['id'], "клиент ", dictData['name'], "тема ", dictData['subject'], "содержание ", dictData['content'])
+
+  id=dictData['id']
+  name=dictData['name']
+  content = dictData['content']
+
+  #переход на следующую строку в Гугл-таблице
+  x = x + 1
+
+  #обновление данных в в Гугл-таблице
+  wks.update_cell(x,1,id)
+  wks.update_cell(x,2,name)
+  wks.update_cell(x,3,content)
+ 
+ except Exception as e:
+  #запись ошибок в лог-файл на Google Диске
+  # Include the raw message body in the error string if JSON decoding fails
+  error_str = f"Error: {str(e)}, Raw Body: {body!r}\n" # Use !r to get the repr() of the body
+  with open("dlq.txt", "a") as f:
+    f.write(error_str)
+  print(f"Error: {str(e)}")
+  print(f"Raw Body: {body!r}")
+
+#потребляем данные из RabbitMQ
+while True:
+  print('Waiting for messages. To exit press CTRL+C')
+  #привязка к очереди topic-обменника RQM
+  channel.basic_consume(queue=consume_queue.method.queue, on_message_callback=on_inputs_message, auto_ack=True)
+  channel.start_consuming()
+
+
+####################################ячейка в Google Colab №3 - закрытие соединения###########################################
+#Закрываем соединения
+channel.close()
+connection.close()
